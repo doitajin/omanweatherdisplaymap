@@ -126,7 +126,7 @@ export function Oman3DMap({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.18;
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
 
     container.appendChild(renderer.domElement);
 
@@ -820,11 +820,13 @@ export function Oman3DMap({
 
     // --- Animation Loop ---
     let animId: number;
-    let clock = new THREE.Clock();
+    const timer = new THREE.Timer();
+    timer.connect(document);
 
     const tick = () => {
       animId = requestAnimationFrame(tick);
-      const delta = clock.getDelta();
+      timer.update();
+      const delta = timer.getDelta();
 
       if (stateRef.current.isTransitioningCamera) {
         const factor = 1 - Math.exp(-4.5 * delta);
@@ -1010,6 +1012,7 @@ export function Oman3DMap({
       renderer.domElement.removeEventListener('touchend', handleClickOrTouch);
       cancelAnimationFrame(animId);
 
+      timer.dispose();
       controls.dispose();
       terrainGeo.dispose();
       terrainMat.dispose();
