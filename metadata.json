@@ -1,0 +1,6 @@
+{
+  "name": "Oman 3D Weather Map",
+  "description": "Interactive 3D topographic weather map of the Sultanate of Oman featuring real-time temperature, humidity, and atmospheric conditions across all 11 governorates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
