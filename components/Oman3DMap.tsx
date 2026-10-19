@@ -421,6 +421,69 @@ export function Oman3DMap({
     const windPoints = new THREE.Points(windGeo, windMat);
     scene.add(windPoints);
 
+    // --- Wind Vector Streamlets Visualization ---
+    const streamletCount = 100;
+    const streamlets: {
+      x: number;
+      y: number;
+      z: number;
+      age: number;
+      maxAge: number;
+      speed: number;
+      tailX: number;
+      tailY: number;
+      tailZ: number;
+    }[] = [];
+    const streamletPositions = new Float32Array(streamletCount * 6);
+    const streamletColors = new Float32Array(streamletCount * 6);
+
+    // --- Streamlet Respawning ---
+    const respawnStreamlet = (p: (typeof streamlets)[number]) => {
+      const randLoc = OMAN_LOCATIONS[Math.floor(Math.random() * OMAN_LOCATIONS.length)];
+      const [gx, gz] = geoTo3D(randLoc.lat, randLoc.lon);
+      p.x = gx + (Math.random() - 0.5) * 8;
+      p.z = gz + (Math.random() - 0.5) * 8;
+      p.age = 0;
+      p.maxAge = 100 + Math.random() * 50;
+      p.speed = 0;
+
+      const lon = p.x / 2.35 + CENTER_LON;
+      const lat = -p.z / 2.55 + CENTER_LAT;
+      p.y = Math.max(0.12, calculateOmanElevation(lon, lat) + 0.22);
+      p.tailX = p.x;
+      p.tailY = p.y;
+      p.tailZ = p.z;
+    };
+
+    for (let i = 0; i < streamletCount; i++) {
+      const p = {
+        x: 0,
+        y: 0.5,
+        z: 0,
+        age: 0,
+        maxAge: 100,
+        speed: 0,
+        tailX: 0,
+        tailY: 0,
+        tailZ: 0,
+      };
+      respawnStreamlet(p);
+      streamlets.push(p);
+    }
+
+    const streamletGeo = new THREE.BufferGeometry();
+    streamletGeo.setAttribute('position', new THREE.BufferAttribute(streamletPositions, 3));
+    streamletGeo.setAttribute('color', new THREE.BufferAttribute(streamletColors, 3));
+    const streamletMat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.8,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const streamletLines = new THREE.LineSegments(streamletGeo, streamletMat);
+    scene.add(streamletLines);
+
     // --- Solar Lighting & Diurnal Sky Engine ---
     const updateSolarLighting = (hour: number) => {
       const solarAngle = ((hour - 6) / 24) * Math.PI * 2;
@@ -482,6 +545,58 @@ export function Oman3DMap({
         return tel.windSpeedKmh;
       }
       return 30;
+    };
+
+    // --- Vector Field Sampling for Wind Streamlets ---
+    // Interpolates wind speed and direction from nearby telemetry stations.
+    // World space: +x = east, -z = north (see geoTo3D projection above).
+    const sampleVectorField = (
+      x: number,
+      z: number,
+      hour: number,
+      out: { vx: number; vz: number; speedKmh: number }
+    ) => {
+      const lon = x / 2.35 + CENTER_LON;
+      const lat = -z / 2.55 + CENTER_LAT;
+
+      let sumWeight = 0;
+      let sumSpeed = 0;
+      let sumDirX = 0;
+      let sumDirZ = 0;
+
+      for (const loc of OMAN_LOCATIONS) {
+        const dist = Math.hypot(lon - loc.lon, (lat - loc.lat) * 1.1) + 0.15;
+        const w = 1 / (dist * dist);
+        sumWeight += w;
+
+        sumSpeed += getLocValueAtHour(loc.id, 'wind', hour) * w;
+
+        // Meteorological direction is where wind comes FROM; flow is the opposite.
+        const tel = stateRef.current.weatherData[loc.id];
+        const dirDeg = tel ? tel.windDirectionDeg : 90;
+        const flowRad = ((dirDeg + 180) * Math.PI) / 180;
+        sumDirX += Math.sin(flowRad) * w;
+        sumDirZ += -Math.cos(flowRad) * w;
+      }
+
+      const speedKmh = sumSpeed / sumWeight;
+      let dirX = sumDirX / sumWeight;
+      let dirZ = sumDirZ / sumWeight;
+      const dirLen = Math.hypot(dirX, dirZ);
+
+      if (dirLen > 1e-6) {
+        dirX /= dirLen;
+        dirZ /= dirLen;
+      } else {
+        dirX = 1;
+        dirZ = 0;
+      }
+
+      // Units per frame at 60fps, scaled by wind speed.
+      const velScale = 0.012 + speedKmh * 0.0016;
+      out.vx = dirX * velScale;
+      out.vz = dirZ * velScale;
+      out.speedKmh = speedKmh;
     };
 
     // --- Terrain Color Updating Function ---
@@ -734,8 +849,9 @@ export function Oman3DMap({
       // Update real-time vector field wind streamlets
       const vFieldOut = { vx: 0, vz: 0, speedKmh: 15 };
       const isWindMode = stateRef.current.activeMetric === 'wind';
-      const trailFactor = isWindMode ? 0.38 : 0.22;
+      const trailLength = isWindMode ? 0.55 : 0.32;
       const speedScale = isWindMode ? 1.0 : 0.75;
+      const frameScale = Math.min(delta * 60, 3);
 
       for (let i = 0; i < streamletCount; i++) {
         const p = streamlets[i];
@@ -748,16 +864,19 @@ export function Oman3DMap({
         sampleVectorField(p.x, p.z, stateRef.current.selectedHour, vFieldOut);
         p.speed = vFieldOut.speedKmh;
 
-        // Tail follows behind
-        p.tailX = p.x - vFieldOut.vx * trailFactor * speedScale;
-        p.tailZ = p.z - vFieldOut.vz * trailFactor * speedScale;
+        // Tail trails behind the head along the flow direction
+        const vLen = Math.hypot(vFieldOut.vx, vFieldOut.vz) || 1;
+        const dirX = vFieldOut.vx / vLen;
+        const dirZ = vFieldOut.vz / vLen;
+        p.tailX = p.x - dirX * trailLength;
+        p.tailZ = p.z - dirZ * trailLength;
         const tailLon = p.tailX / 2.35 + CENTER_LON;
         const tailLat = -p.tailZ / 2.55 + CENTER_LAT;
         p.tailY = Math.max(0.12, calculateOmanElevation(tailLon, tailLat) + 0.22);
 
         // Advance head
-        p.x += vFieldOut.vx * speedScale;
-        p.z += vFieldOut.vz * speedScale;
+        p.x += vFieldOut.vx * speedScale * frameScale;
+        p.z += vFieldOut.vz * speedScale * frameScale;
         const headLon = p.x / 2.35 + CENTER_LON;
         const headLat = -p.z / 2.55 + CENTER_LAT;
         p.y = Math.max(0.12, calculateOmanElevation(headLon, headLat) + 0.22);
@@ -904,6 +1023,8 @@ export function Oman3DMap({
       crownGeo.dispose();
       windGeo.dispose();
       windMat.dispose();
+      streamletGeo.dispose();
+      streamletMat.dispose();
       renderer.dispose();
 
       if (container.contains(renderer.domElement)) {
