@@ -390,7 +390,7 @@ export function WeatherDock({
                     className={`group flex items-center gap-1.5 px-3 py-1.5 min-h-[34px] text-xs rounded-lg transition-all cursor-pointer whitespace-nowrap border touch-manipulation ${
                       isSelected
                         ? 'bg-amber-500/25 border-amber-500 text-white font-semibold'
-                        : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:text-white hover:bg-slate-850 hover:border-slate-700'
+                        : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 hover:border-slate-700'
                     }`}
                   >
                     {loc.category === 'mountain' && <Mountain className="w-3 h-3 text-emerald-400 shrink-0" />}

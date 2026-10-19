@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { X, Wind, Droplets, Gauge, Compass, MapPin } from 'lucide-react';
 import { OMAN_LOCATIONS } from '@/lib/governorates';
 import { WeatherTelemetry, cToF } from '@/lib/weather';
@@ -23,6 +23,51 @@ export function RegionDetailModal({
   tempUnit,
   selectedHour = 12,
 }: RegionDetailModalProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
+  // Move focus into the panel when it opens and return it to the trigger when
+  // it closes, so keyboard and screen-reader users are never dropped on <body>.
+  useEffect(() => {
+    if (!governorateId) return;
+
+    restoreFocusRef.current = document.activeElement as HTMLElement | null;
+    closeButtonRef.current?.focus();
+
+    return () => {
+      restoreFocusRef.current?.focus?.();
+    };
+  }, [governorateId]);
+
+  // Trap Tab inside the panel while it is open.
+  useEffect(() => {
+    if (!governorateId) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+
+      const focusables = panelRef.current?.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusables || focusables.length === 0) return;
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [governorateId]);
+
   if (!governorateId) return null;
 
   const gov = OMAN_LOCATIONS.find((g) => g.id === governorateId);
@@ -43,11 +88,18 @@ export function RegionDetailModal({
       {/* Mobile Backdrop Scrim */}
       <div
         onClick={onClose}
+        aria-hidden="true"
         className="fixed inset-0 bg-black/40 z-35 md:hidden pointer-events-auto backdrop-blur-xs transition-opacity"
       />
 
       {/* Responsive Container: Desktop = top-right floating card; Mobile = bottom-sheet drawer */}
-      <div className="fixed md:top-20 md:right-6 md:left-auto left-0 right-0 bottom-0 md:bottom-auto z-40 w-full md:max-w-sm pointer-events-auto animate-in fade-in slide-in-from-bottom-6 md:slide-in-from-right-4 duration-200">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="region-detail-title"
+        className="fixed md:top-20 md:right-6 md:left-auto left-0 right-0 bottom-0 md:bottom-auto z-40 w-full md:max-w-sm pointer-events-auto animate-in fade-in slide-in-from-bottom-6 md:slide-in-from-right-4 duration-200"
+      >
         <div className="bg-slate-950/95 border border-slate-800/90 rounded-t-3xl md:rounded-2xl p-4 md:p-5 shadow-2xl flex flex-col gap-3.5 text-slate-100 max-h-[85vh] overflow-y-auto">
           {/* Mobile Handle */}
           <div className="md:hidden w-10 h-1 bg-slate-700 rounded-full mx-auto -mt-1 mb-1" />
@@ -56,7 +108,9 @@ export function RegionDetailModal({
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-xl font-bold tracking-tight text-white">{gov.nameEn}</h2>
+                <h2 id="region-detail-title" className="text-xl font-bold tracking-tight text-white">
+                  {gov.nameEn}
+                </h2>
                 <span className="text-xs text-slate-400 font-medium">({gov.nameAr})</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
@@ -66,9 +120,11 @@ export function RegionDetailModal({
               </div>
             </div>
             <button
+              ref={closeButtonRef}
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer touch-manipulation"
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
               title="Close inspection"
+              aria-label={`Close details for ${gov.nameEn}`}
             >
               <X className="w-5 h-5 md:w-4 md:h-4" />
             </button>
@@ -109,7 +165,7 @@ export function RegionDetailModal({
           {/* Secondary Weather Stats Grid */}
           {telemetry && (
             <div className="grid grid-cols-3 gap-2">
-              <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-850 flex flex-col gap-1">
+              <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-800/70 flex flex-col gap-1">
                 <div className="flex items-center gap-1 text-[11px] text-slate-400">
                   <Wind className="w-3 h-3 text-emerald-400" />
                   <span>Wind</span>
@@ -126,7 +182,7 @@ export function RegionDetailModal({
                 </div>
               </div>
 
-              <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-850 flex flex-col gap-1">
+              <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-800/70 flex flex-col gap-1">
                 <div className="flex items-center gap-1 text-[11px] text-slate-400">
                   <Droplets className="w-3 h-3 text-cyan-400" />
                   <span>Moisture</span>
@@ -139,7 +195,7 @@ export function RegionDetailModal({
                 </span>
               </div>
 
-              <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-850 flex flex-col gap-1">
+              <div className="p-2.5 bg-slate-900/60 rounded-xl border border-slate-800/70 flex flex-col gap-1">
                 <div className="flex items-center gap-1 text-[11px] text-slate-400">
                   <Gauge className="w-3 h-3 text-indigo-400" />
                   <span>Pressure</span>
@@ -159,7 +215,7 @@ export function RegionDetailModal({
                 <span className="uppercase tracking-wider">24h Diurnal Curve</span>
                 <span className="text-slate-400 font-mono">Open-Meteo</span>
               </div>
-              <div className="flex items-end gap-1 h-14 bg-slate-900/40 p-2 rounded-xl border border-slate-850">
+              <div className="flex items-end gap-1 h-14 bg-slate-900/40 p-2 rounded-xl border border-slate-800/70">
                 {telemetry.hourly.temperatureC.slice(0, 16).map((t, idx) => {
                   const minT = 15;
                   const maxT = 45;
@@ -194,7 +250,7 @@ export function RegionDetailModal({
           )}
 
           {/* Regional Highlights */}
-          <div className="text-xs text-slate-300 leading-relaxed border-t border-slate-850 pt-3">
+          <div className="text-xs text-slate-300 leading-relaxed border-t border-slate-800/70 pt-3">
             <p className="mb-2">{gov.description}</p>
             <div className="flex flex-wrap gap-1 mt-1.5">
               {gov.highlights.map((h, i) => (

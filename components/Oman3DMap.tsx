@@ -45,8 +45,24 @@ export function Oman3DMap({
   onResetViewRef,
 }: Oman3DMapProps) {
   const mountRef = useRef<HTMLDivElement>(null);
-  const [screenLabels, setScreenLabels] = useState<ScreenLabel[]>([]);
   const [hoveredGovId, setHoveredGovId] = useState<string | null>(null);
+  const [contextLost, setContextLost] = useState(false);
+
+  // Label positions change every frame while the camera moves. Keeping them in
+  // React state would re-render the whole label tree 60x/sec, so positions are
+  // written straight to the DOM and React only re-renders when label *content*
+  // (value, visibility, importance) actually changes.
+  const [labels, setLabels] = useState<ScreenLabel[]>([]);
+  const labelDataRef = useRef<ScreenLabel[]>([]);
+  const labelElsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const labelSignatureRef = useRef('');
+
+  // Mirrors hoveredGovId for use inside the WebGL effect, which must not
+  // re-run when the hovered location changes.
+  const hoveredGovIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    hoveredGovIdRef.current = hoveredGovId;
+  }, [hoveredGovId]);
 
   const onSelectRegionRef = useRef(onSelectRegion);
   useEffect(() => {
@@ -80,6 +96,12 @@ export function Oman3DMap({
     stateRef.current.targetLookAt.set(0.0, 0.4, 0.0);
     stateRef.current.isTransitioningCamera = true;
   }, []);
+
+  // Expose the reset handler to the WebGL effect so the Home key can use it.
+  const resetCameraRef = useRef(resetCamera);
+  useEffect(() => {
+    resetCameraRef.current = resetCamera;
+  }, [resetCamera]);
 
   // When selectedGovId changes, glide camera towards that region
   useEffect(() => {
@@ -130,6 +152,26 @@ export function Oman3DMap({
 
     container.appendChild(renderer.domElement);
 
+    // A WebGL canvas is opaque to assistive technology, so it needs an
+    // explicit role and a text alternative describing what it renders.
+    renderer.domElement.setAttribute('role', 'img');
+    renderer.domElement.setAttribute(
+      'aria-label',
+      `Interactive 3D topographic map of Oman showing weather across ${OMAN_LOCATIONS.length} monitored locations. ` +
+        'Use the arrow keys to orbit, plus and minus to zoom, and Home to reset the view. ' +
+        'Each location is also listed as a button below the map.'
+    );
+    renderer.domElement.setAttribute('tabindex', '0');
+
+    // Honour the OS "reduce motion" setting: no animated streamlets and no
+    // eased camera glides, so the map snaps instead of animating.
+    const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let prefersReducedMotion = reducedMotionQuery.matches;
+    const handleReducedMotionChange = (e: MediaQueryListEvent) => {
+      prefersReducedMotion = e.matches;
+    };
+    reducedMotionQuery.addEventListener('change', handleReducedMotionChange);
+
     // OrbitControls with multi-touch gestures support
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -142,6 +184,11 @@ export function Oman3DMap({
       ONE: THREE.TOUCH.ROTATE,
       TWO: THREE.TOUCH.DOLLY_PAN,
     };
+    // Must be set through the controls API: the OrbitControls constructor
+    // calls disconnect() on an already-connected element, which resets
+    // domElement.style.cursor back to 'auto'. Using cursorStyle also lets
+    // OrbitControls switch to 'grabbing' while a drag is in progress.
+    controls.cursorStyle = 'grab';
 
     // Procedural Studio Environment for realistic metallic and roughness reflections
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
@@ -745,6 +792,40 @@ export function Oman3DMap({
     updateTerrainColors();
     updatePillarDisplays();
 
+    // --- Camera helpers used by keyboard navigation ---
+
+    // The browser can drop a WebGL context (GPU reset, tab suspension, or too
+    // many live contexts). Preventing the default lets the browser attempt a
+    // restore instead of killing the canvas outright. Declared before the
+    // animation loop starts, since the loop reads it on the very first frame.
+    let contextLost = false;
+
+    // Orbit the camera around the current target by horizontal/vertical steps.
+    const orbitCamera = (azimuthStep: number, polarStep: number) => {
+      stateRef.current.isTransitioningCamera = false;
+
+      const offset = _tempVec3.copy(camera.position).sub(controls.target);
+      const spherical = new THREE.Spherical().setFromVector3(offset);
+      spherical.theta += azimuthStep;
+      spherical.phi = Math.max(0.08, Math.min(Math.PI / 2.05, spherical.phi + polarStep));
+
+      offset.setFromSpherical(spherical);
+      camera.position.copy(controls.target).add(offset);
+      camera.lookAt(controls.target);
+      controls.update();
+    };
+
+    // Dolly the camera toward or away from the target.
+    const zoomCamera = (factor: number) => {
+      stateRef.current.isTransitioningCamera = false;
+
+      const offset = _tempVec3.copy(camera.position).sub(controls.target);
+      const distance = Math.max(controls.minDistance, Math.min(controls.maxDistance, offset.length() * factor));
+      offset.setLength(distance);
+      camera.position.copy(controls.target).add(offset);
+      controls.update();
+    };
+
     // --- Raycasting for Clicking / Hovering Pillars ---
     const getPointerCoords = (e: MouseEvent | TouchEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -766,57 +847,156 @@ export function Oman3DMap({
       };
     };
 
+    // Resolve the governorate id under a screen-space pointer position.
+    const pickGovernorate = (): string | null => {
+      _raycaster.setFromCamera(_mouse, camera);
+      const intersects = _raycaster.intersectObjects(
+        pillarGroups.map((p) => p.group),
+        true
+      );
+
+      if (intersects.length === 0) return null;
+
+      let parentGroup: THREE.Object3D | null = intersects[0].object;
+      while (parentGroup && !parentGroup.userData?.governorateId) {
+        parentGroup = parentGroup.parent;
+      }
+      return parentGroup?.userData?.governorateId ?? null;
+    };
+
+    // Hover raycasting is coalesced into a single rAF so a fast mouse cannot
+    // queue dozens of intersect() calls per frame.
+    let hoverRafId: number | null = null;
+    let hoverDirty = false;
+
+    // OrbitControls owns the 'grab' / 'grabbing' cursor, but it resets the
+    // canvas cursor when a drag ends, so the hover cursor is re-applied after
+    // every interaction.
+    const applyHoverCursor = () => {
+      renderer.domElement.style.cursor = hoveredGovIdRef.current ? 'pointer' : 'grab';
+    };
+
+    const runHoverPick = () => {
+      hoverRafId = null;
+      if (!hoverDirty) return;
+      hoverDirty = false;
+
+      const id = pickGovernorate();
+      if (id !== hoveredGovIdRef.current) {
+        hoveredGovIdRef.current = id;
+        setHoveredGovId(id);
+      }
+      applyHoverCursor();
+    };
+
     const handlePointerMove = (e: MouseEvent) => {
       const coords = getPointerCoords(e);
       _mouse.x = coords.x;
       _mouse.y = coords.y;
 
-      _raycaster.setFromCamera(_mouse, camera);
-      const intersects = _raycaster.intersectObjects(
-        pillarGroups.map((p) => p.group),
-        true
-      );
-
-      if (intersects.length > 0) {
-        let parentGroup: THREE.Object3D | null = intersects[0].object;
-        while (parentGroup && !parentGroup.userData?.governorateId) {
-          parentGroup = parentGroup.parent;
-        }
-        if (parentGroup && parentGroup.userData?.governorateId) {
-          setHoveredGovId(parentGroup.userData.governorateId);
-          renderer.domElement.style.cursor = 'pointer';
-          return;
-        }
+      hoverDirty = true;
+      if (hoverRafId === null) {
+        hoverRafId = requestAnimationFrame(runHoverPick);
       }
-      setHoveredGovId(null);
-      renderer.domElement.style.cursor = 'grab';
     };
 
-    const handleClickOrTouch = (e: MouseEvent | TouchEvent) => {
+    // Selection uses pointerdown/pointerup with a movement threshold. A plain
+    // `click` handler fires at the end of an orbit drag, which made rotating
+    // the map randomly select whichever pillar the cursor landed on; a
+    // `touchend` handler also fired while the user was scrolling the page.
+    const DRAG_THRESHOLD_PX = 8;
+    let pointerDownX = 0;
+    let pointerDownY = 0;
+    let pointerTracking = false;
+
+    const handlePointerDown = (e: PointerEvent) => {
+      pointerDownX = e.clientX;
+      pointerDownY = e.clientY;
+      pointerTracking = true;
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      if (!pointerTracking) return;
+      pointerTracking = false;
+
+      const moved = Math.hypot(e.clientX - pointerDownX, e.clientY - pointerDownY);
+      if (moved > DRAG_THRESHOLD_PX) {
+        applyHoverCursor();
+        return;
+      }
+
       const coords = getPointerCoords(e);
       _mouse.x = coords.x;
       _mouse.y = coords.y;
 
-      _raycaster.setFromCamera(_mouse, camera);
-      const intersects = _raycaster.intersectObjects(
-        pillarGroups.map((p) => p.group),
-        true
-      );
-
-      if (intersects.length > 0) {
-        let parentGroup: THREE.Object3D | null = intersects[0].object;
-        while (parentGroup && !parentGroup.userData?.governorateId) {
-          parentGroup = parentGroup.parent;
-        }
-        if (parentGroup && parentGroup.userData?.governorateId) {
-          onSelectRegionRef.current(parentGroup.userData.governorateId);
-        }
-      }
+      const id = pickGovernorate();
+      if (id) onSelectRegionRef.current(id);
     };
 
-    renderer.domElement.addEventListener('mousemove', handlePointerMove);
-    renderer.domElement.addEventListener('click', handleClickOrTouch);
-    renderer.domElement.addEventListener('touchend', handleClickOrTouch, { passive: true });
+    const handlePointerCancel = () => {
+      pointerTracking = false;
+      applyHoverCursor();
+    };
+
+    const handlePointerLeave = () => {
+      hoveredGovIdRef.current = null;
+      setHoveredGovId(null);
+      renderer.domElement.style.cursor = 'grab';
+    };
+
+    renderer.domElement.addEventListener('pointermove', handlePointerMove);
+    renderer.domElement.addEventListener('pointerdown', handlePointerDown);
+    renderer.domElement.addEventListener('pointerup', handlePointerUp);
+    renderer.domElement.addEventListener('pointercancel', handlePointerCancel);
+    renderer.domElement.addEventListener('pointerleave', handlePointerLeave);
+
+    // OrbitControls restores its own cursor when a drag finishes, which would
+    // hide the pointer cursor that marks a selectable location.
+    const handleControlsEnd = () => applyHoverCursor();
+    controls.addEventListener('end', handleControlsEnd);
+
+    // --- Keyboard Camera Navigation ---
+    // Arrow keys orbit, +/- zoom, Home resets. Bound to the canvas so keyboard
+    // users can drive the camera without stealing keys from the rest of the UI.
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const orbitStep = 0.12;
+      const zoomStep = 0.9;
+      let handled = true;
+
+      switch (e.key) {
+        case 'ArrowLeft':
+          orbitCamera(-orbitStep, 0);
+          break;
+        case 'ArrowRight':
+          orbitCamera(orbitStep, 0);
+          break;
+        case 'ArrowUp':
+          orbitCamera(0, -orbitStep);
+          break;
+        case 'ArrowDown':
+          orbitCamera(0, orbitStep);
+          break;
+        case '+':
+        case '=':
+          zoomCamera(zoomStep);
+          break;
+        case '-':
+        case '_':
+          zoomCamera(1 / zoomStep);
+          break;
+        case 'Home':
+          resetCameraRef.current();
+          break;
+        default:
+          handled = false;
+      }
+
+      if (handled) e.preventDefault();
+    };
+
+    renderer.domElement.addEventListener('keydown', handleKeyDown);
 
     // --- Animation Loop ---
     let animId: number;
@@ -828,16 +1008,26 @@ export function Oman3DMap({
       timer.update();
       const delta = timer.getDelta();
 
-      if (stateRef.current.isTransitioningCamera) {
-        const factor = 1 - Math.exp(-4.5 * delta);
-        camera.position.lerp(stateRef.current.targetCamPos, factor);
-        controls.target.lerp(stateRef.current.targetLookAt, factor);
+      // Nothing can be drawn while the GPU context is gone.
+      if (contextLost) return;
 
-        if (
-          camera.position.distanceTo(stateRef.current.targetCamPos) < 0.05 &&
-          controls.target.distanceTo(stateRef.current.targetLookAt) < 0.05
-        ) {
+      if (stateRef.current.isTransitioningCamera) {
+        if (prefersReducedMotion) {
+          // Snap to the target instead of easing.
+          camera.position.copy(stateRef.current.targetCamPos);
+          controls.target.copy(stateRef.current.targetLookAt);
           stateRef.current.isTransitioningCamera = false;
+        } else {
+          const factor = 1 - Math.exp(-4.5 * delta);
+          camera.position.lerp(stateRef.current.targetCamPos, factor);
+          controls.target.lerp(stateRef.current.targetLookAt, factor);
+
+          if (
+            camera.position.distanceTo(stateRef.current.targetCamPos) < 0.05 &&
+            controls.target.distanceTo(stateRef.current.targetLookAt) < 0.05
+          ) {
+            stateRef.current.isTransitioningCamera = false;
+          }
         }
       }
 
@@ -853,14 +1043,17 @@ export function Oman3DMap({
       const isWindMode = stateRef.current.activeMetric === 'wind';
       const trailLength = isWindMode ? 0.55 : 0.32;
       const speedScale = isWindMode ? 1.0 : 0.75;
-      const frameScale = Math.min(delta * 60, 3);
+      const frameScale = prefersReducedMotion ? 0 : Math.min(delta * 60, 3);
 
       for (let i = 0; i < streamletCount; i++) {
         const p = streamlets[i];
-        p.age++;
 
-        if (p.age > p.maxAge || p.x < -14 || p.x > 14 || p.z < -16 || p.z > 16) {
-          respawnStreamlet(p);
+        if (!prefersReducedMotion) {
+          p.age++;
+
+          if (p.age > p.maxAge || p.x < -14 || p.x > 14 || p.z < -16 || p.z > 16) {
+            respawnStreamlet(p);
+          }
         }
 
         sampleVectorField(p.x, p.z, stateRef.current.selectedHour, vFieldOut);
@@ -899,7 +1092,9 @@ export function Oman3DMap({
         // Breeze (15-28 km/h): Emerald Teal
         // Gale (28-40+ km/h): Electric Amber
         const speedNorm = Math.min(1.0, Math.max(0, (p.speed - 8) / 32));
-        const lifeRatio = p.age / p.maxAge;
+        // With reduced motion the streamlets are static, so they need a fixed
+        // opacity instead of the fade-in/fade-out tied to their lifetime.
+        const lifeRatio = prefersReducedMotion ? 0.5 : p.age / p.maxAge;
         const alpha = Math.sin(lifeRatio * Math.PI);
 
         const headBrightness = (isWindMode ? 1.0 : 0.6) * alpha;
@@ -979,7 +1174,31 @@ export function Oman3DMap({
           isImportant: Boolean(isImportant),
         });
       }
-      setScreenLabels(newLabels);
+
+      // Positions are written straight to the DOM; React only re-renders when
+      // the label content changes, so orbiting the camera costs no re-renders.
+      labelDataRef.current = newLabels;
+      for (const lbl of newLabels) {
+        const el = labelElsRef.current.get(lbl.id);
+        if (!el) continue;
+        // A location renders as a full badge when it is important, hovered or
+        // selected, and as a small dot otherwise. The two variants sit at
+        // different vertical offsets, so the same rule has to be applied here.
+        const isFullBadge =
+          lbl.isImportant ||
+          lbl.id === hoveredGovIdRef.current ||
+          lbl.id === stateRef.current.selectedGovId;
+        el.style.left = `${lbl.screenX}px`;
+        el.style.top = `${isFullBadge ? lbl.screenY - 14 : lbl.screenY}px`;
+      }
+
+      const signature = newLabels
+        .map((l) => `${l.id}:${l.visible ? 1 : 0}:${l.value}:${l.isImportant ? 1 : 0}`)
+        .join('|');
+      if (signature !== labelSignatureRef.current) {
+        labelSignatureRef.current = signature;
+        setLabels(newLabels);
+      }
 
       renderer.render(scene, camera);
     };
@@ -1005,11 +1224,36 @@ export function Oman3DMap({
 
     window.addEventListener('resize', handleResize);
 
+    // Preventing the default on context loss lets the browser attempt to
+    // restore the context instead of tearing the canvas down for good.
+    const handleContextLost = (e: Event) => {
+      e.preventDefault();
+      contextLost = true;
+      setContextLost(true);
+    };
+
+    const handleContextRestored = () => {
+      contextLost = false;
+      setContextLost(false);
+      onStateChanged();
+    };
+
+    renderer.domElement.addEventListener('webglcontextlost', handleContextLost);
+    renderer.domElement.addEventListener('webglcontextrestored', handleContextRestored);
+
     return () => {
       window.removeEventListener('resize', handleResize);
-      renderer.domElement.removeEventListener('mousemove', handlePointerMove);
-      renderer.domElement.removeEventListener('click', handleClickOrTouch);
-      renderer.domElement.removeEventListener('touchend', handleClickOrTouch);
+      renderer.domElement.removeEventListener('pointermove', handlePointerMove);
+      renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
+      renderer.domElement.removeEventListener('pointerup', handlePointerUp);
+      renderer.domElement.removeEventListener('pointercancel', handlePointerCancel);
+      renderer.domElement.removeEventListener('pointerleave', handlePointerLeave);
+      renderer.domElement.removeEventListener('keydown', handleKeyDown);
+      renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
+      renderer.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
+      controls.removeEventListener('end', handleControlsEnd);
+      reducedMotionQuery.removeEventListener('change', handleReducedMotionChange);
+      if (hoverRafId !== null) cancelAnimationFrame(hoverRafId);
       cancelAnimationFrame(animId);
 
       timer.dispose();
@@ -1049,43 +1293,70 @@ export function Oman3DMap({
     <div className="relative w-full h-full overflow-hidden select-none touch-none">
       <div ref={mountRef} className="absolute inset-0 w-full h-full touch-none" />
 
+      {/* GPU context recovery notice */}
+      {contextLost && (
+        <div
+          role="status"
+          className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm"
+        >
+          <div className="max-w-sm px-5 py-4 text-center">
+            <p className="text-sm font-semibold text-white">3D view paused</p>
+            <p className="mt-1 text-xs text-slate-400">
+              The graphics context was interrupted by the browser. It will resume automatically, or reload
+              the page to restart the map.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* 2D Projected Screen Badges */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
-        {screenLabels.map((lbl) => {
+        {labels.map((lbl) => {
           if (!lbl.visible) return null;
           const isHovered = hoveredGovId === lbl.id;
           const isSelected = selectedGovId === lbl.id;
+          const registerLabel = (el: HTMLButtonElement | null) => {
+            if (el) labelElsRef.current.set(lbl.id, el);
+            else labelElsRef.current.delete(lbl.id);
+          };
 
           // For visual clarity on desktop and mobile, show important places or hovered/selected places
           if (!lbl.isImportant && !isHovered && !isSelected) {
             return (
-              <div
+              <button
                 key={lbl.id}
+                ref={registerLabel}
+                type="button"
                 onClick={() => onSelectRegionRef.current(lbl.id)}
-                className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-auto cursor-pointer p-1 touch-manipulation group"
+                aria-label={`${lbl.name}, ${lbl.value}`}
+                className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-auto cursor-pointer p-1 touch-manipulation group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-950 rounded-full"
                 style={{
                   left: `${lbl.screenX}px`,
                   top: `${lbl.screenY}px`,
                 }}
                 title={lbl.name}
               >
-                <div className="w-2.5 h-2.5 rounded-full bg-slate-300/80 border border-slate-900 group-hover:scale-150 group-hover:bg-amber-400 transition-all shadow-sm" />
-              </div>
+                <span className="block w-2.5 h-2.5 rounded-full bg-slate-300/80 border border-slate-900 group-hover:scale-150 group-hover:bg-amber-400 transition-all shadow-sm" />
+              </button>
             );
           }
 
           return (
-            <div
+            <button
               key={lbl.id}
+              ref={registerLabel}
+              type="button"
               onClick={() => onSelectRegionRef.current(lbl.id)}
-              className="absolute -translate-x-1/2 -translate-y-full pointer-events-auto transition-transform duration-150 cursor-pointer touch-manipulation"
+              aria-label={`${lbl.name}, ${lbl.value}`}
+              aria-current={isSelected ? 'true' : undefined}
+              className="absolute -translate-x-1/2 -translate-y-full pointer-events-auto transition-transform duration-150 cursor-pointer touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 rounded-lg"
               style={{
                 left: `${lbl.screenX}px`,
                 top: `${lbl.screenY - 14}px`,
                 transform: `translate(-50%, -100%) scale(${isSelected ? 1.15 : isHovered ? 1.08 : 1.0})`,
               }}
             >
-              <div
+              <span
                 className={`flex items-center gap-1.5 px-2 md:px-2.5 py-1 min-h-[30px] rounded-lg border shadow-lg backdrop-blur-none transition-colors ${
                   isSelected
                     ? 'bg-amber-500 text-slate-950 font-bold border-white'
@@ -1110,8 +1381,8 @@ export function Oman3DMap({
                     {lbl.value}
                   </span>
                 )}
-              </div>
-            </div>
+              </span>
+            </button>
           );
         })}
       </div>

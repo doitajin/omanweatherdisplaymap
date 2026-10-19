@@ -67,7 +67,7 @@ export function WeatherLegendOverlay({ activeMetric, tempUnit }: WeatherLegendOv
 
                 {/* Micro Category Explanations */}
                 <div className="grid grid-cols-2 gap-1.5 pt-1 text-[10px]">
-                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-850">
+                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-800/70">
                     <div className="w-2.5 h-2.5 rounded-full bg-[#0284C7] shrink-0" />
                     <div>
                       <span className="font-semibold text-white block">Alpine Cool</span>
@@ -75,7 +75,7 @@ export function WeatherLegendOverlay({ activeMetric, tempUnit }: WeatherLegendOv
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-850">
+                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-800/70">
                     <div className="w-2.5 h-2.5 rounded-full bg-[#10B981] shrink-0" />
                     <div>
                       <span className="font-semibold text-white block">Mild Highland</span>
@@ -83,7 +83,7 @@ export function WeatherLegendOverlay({ activeMetric, tempUnit }: WeatherLegendOv
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-850">
+                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-800/70">
                     <div className="w-2.5 h-2.5 rounded-full bg-[#F59E0B] shrink-0" />
                     <div>
                       <span className="font-semibold text-white block">Warm Coastal</span>
@@ -91,7 +91,7 @@ export function WeatherLegendOverlay({ activeMetric, tempUnit }: WeatherLegendOv
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-850">
+                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-800/70">
                     <div className="w-2.5 h-2.5 rounded-full bg-[#DC2626] shrink-0" />
                     <div>
                       <span className="font-semibold text-white block">Desert Heat</span>
@@ -120,7 +120,7 @@ export function WeatherLegendOverlay({ activeMetric, tempUnit }: WeatherLegendOv
                 </div>
 
                 <div className="grid grid-cols-2 gap-1.5 pt-1 text-[10px]">
-                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-850">
+                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-800/70">
                     <div className="w-2.5 h-2.5 rounded-full bg-[#B45309] shrink-0" />
                     <div>
                       <span className="font-semibold text-white block">Arid (&lt;25%)</span>
@@ -128,7 +128,7 @@ export function WeatherLegendOverlay({ activeMetric, tempUnit }: WeatherLegendOv
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-850">
+                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-800/70">
                     <div className="w-2.5 h-2.5 rounded-full bg-[#14B8A6] shrink-0" />
                     <div>
                       <span className="font-semibold text-white block">Moderate (40%)</span>
@@ -136,7 +136,7 @@ export function WeatherLegendOverlay({ activeMetric, tempUnit }: WeatherLegendOv
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-850">
+                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-800/70">
                     <div className="w-2.5 h-2.5 rounded-full bg-[#0284C7] shrink-0" />
                     <div>
                       <span className="font-semibold text-white block">Marine (65%)</span>
@@ -144,7 +144,7 @@ export function WeatherLegendOverlay({ activeMetric, tempUnit }: WeatherLegendOv
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-850">
+                  <div className="flex items-center gap-1.5 bg-slate-900/70 p-1.5 rounded-lg border border-slate-800/70">
                     <div className="w-2.5 h-2.5 rounded-full bg-[#4338CA] shrink-0" />
                     <div>
                       <span className="font-semibold text-white block">Khareef (&gt;80%)</span>
@@ -171,7 +171,7 @@ export function WeatherLegendOverlay({ activeMetric, tempUnit }: WeatherLegendOv
                   </div>
                 </div>
 
-                <div className="p-2 bg-slate-900/70 rounded-lg border border-slate-850 text-[10px] text-slate-300">
+                <div className="p-2 bg-slate-900/70 rounded-lg border border-slate-800/70 text-[10px] text-slate-300">
                   <span className="font-semibold text-sky-400 block mb-0.5">Maritime Trade Winds:</span>
                   Strongest along Masirah Island and Ras Al Hadd coastal waters.
                 </div>

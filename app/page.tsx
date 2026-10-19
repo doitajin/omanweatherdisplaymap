@@ -7,8 +7,9 @@ import { WeatherDock, WeatherMetric, TempUnit } from '@/components/WeatherDock';
 import { RegionDetailModal } from '@/components/RegionDetailModal';
 import { WeatherLegendOverlay } from '@/components/WeatherLegendOverlay';
 import { getBaselineFallbackTelemetry, WeatherTelemetry } from '@/lib/weather';
+import { OMAN_LOCATIONS } from '@/lib/governorates';
 import { ambientSound } from '@/lib/ambientAudio';
-import { MousePointer } from 'lucide-react';
+import { MousePointer, Hand } from 'lucide-react';
 
 export default function HomePage() {
   const [weatherData, setWeatherData] = useState<Record<string, WeatherTelemetry>>(() =>
@@ -98,6 +99,10 @@ export default function HomePage() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
+      // Never hijack browser/OS shortcuts (Ctrl+1 switches tabs, etc.)
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        return;
+      }
       if (e.key === 'Escape') {
         setSelectedGovId(null);
       } else if (e.key === '1') {
@@ -114,8 +119,28 @@ export default function HomePage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Screen-reader announcement for the current selection.
+  const selectedLocation = selectedGovId
+    ? OMAN_LOCATIONS.find((g) => g.id === selectedGovId)
+    : undefined;
+  const selectedTelemetry = selectedGovId ? weatherData[selectedGovId] : undefined;
+
+  const selectionAnnouncement = selectedLocation
+    ? `${selectedLocation.nameEn} selected. ${
+        selectedTelemetry
+          ? `${Math.round(selectedTelemetry.temperatureC)} degrees Celsius, ` +
+            `${Math.round(selectedTelemetry.relativeHumidity)} percent humidity, ` +
+            `wind ${Math.round(selectedTelemetry.windSpeedKmh)} kilometres per hour.`
+          : ''
+      }`
+    : 'Selection cleared.';
+
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-[#090D15] touch-none">
+      {/* Screen-reader announcements for the 3D map selection */}
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {selectionAnnouncement}
+      </div>
       {/* 3D Three.js Full-Bleed Viewport */}
       <div className="absolute inset-0 w-full h-full">
         <Oman3DMap
@@ -148,25 +173,51 @@ export default function HomePage() {
         tempUnit={tempUnit}
       />
 
-      {/* Discreet 3D Navigation Helper (Desktop Only, Bottom Left) */}
+      {/* Discreet 3D Navigation Helper (Desktop) / Touch Hints (Mobile) */}
       {showHelper && !isDockCollapsed && (
-        <div className="fixed bottom-6 left-6 z-20 hidden lg:flex items-center gap-3 px-3.5 py-2 bg-slate-950/85 border border-slate-800/80 rounded-xl text-xs text-slate-300 pointer-events-auto shadow-lg select-none">
-          <MousePointer className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-          <div className="flex items-center gap-2">
-            <span>Left-click: Orbit</span>
-            <span aria-hidden="true" className="text-slate-700">·</span>
-            <span>Right-click: Pan</span>
-            <span aria-hidden="true" className="text-slate-700">·</span>
-            <span>Scroll: Zoom</span>
+        <>
+          {/* Desktop: mouse affordances */}
+          <div className="fixed bottom-6 left-6 z-20 hidden lg:flex items-center gap-3 px-3.5 py-2 bg-slate-950/85 border border-slate-800/80 rounded-xl text-xs text-slate-300 pointer-events-auto shadow-lg select-none">
+            <MousePointer className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <div className="flex items-center gap-2">
+              <span>Left-click: Orbit</span>
+              <span aria-hidden="true" className="text-slate-700">·</span>
+              <span>Right-click: Pan</span>
+              <span aria-hidden="true" className="text-slate-700">·</span>
+              <span>Scroll: Zoom</span>
+              <span aria-hidden="true" className="text-slate-700">·</span>
+              <span>Arrows / +−: Camera</span>
+            </div>
+            <button
+              onClick={() => setShowHelper(false)}
+              className="text-[10px] text-slate-400 hover:text-slate-200 ml-1 cursor-pointer"
+              title="Dismiss navigation tips"
+              aria-label="Dismiss navigation tips"
+            >
+              ✕
+            </button>
           </div>
-          <button
-            onClick={() => setShowHelper(false)}
-            className="text-[10px] text-slate-400 hover:text-slate-200 ml-1 cursor-pointer"
-            title="Dismiss navigation tips"
-          >
-            ✕
-          </button>
-        </div>
+
+          {/* Mobile: touch affordances */}
+          <div className="fixed bottom-24 left-4 right-4 z-20 lg:hidden flex items-center gap-2.5 px-3 py-2 bg-slate-950/85 border border-slate-800/80 rounded-xl text-[11px] text-slate-300 pointer-events-auto shadow-lg select-none">
+            <Hand className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <div className="flex items-center gap-2 flex-wrap">
+              <span>Drag: Rotate</span>
+              <span aria-hidden="true" className="text-slate-700">·</span>
+              <span>Pinch: Zoom</span>
+              <span aria-hidden="true" className="text-slate-700">·</span>
+              <span>Tap a place: Details</span>
+            </div>
+            <button
+              onClick={() => setShowHelper(false)}
+              className="text-[10px] text-slate-400 hover:text-slate-200 ml-auto cursor-pointer"
+              title="Dismiss navigation tips"
+              aria-label="Dismiss navigation tips"
+            >
+              ✕
+            </button>
+          </div>
+        </>
       )}
 
       {/* Selected Governorate Inspector Card / Mobile Drawer */}

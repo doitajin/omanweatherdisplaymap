@@ -52,8 +52,8 @@ export function TopBar({
         </div>
       </div>
 
-      {/* Zone 2: 4-5 concise single-line nav links with typographic separators */}
-      <nav className="hidden md:flex items-center gap-3.5 text-xs font-medium text-slate-400 whitespace-nowrap">
+      {/* Zone 2: status readout (not navigation, so not a <nav>) */}
+      <div className="hidden md:flex items-center gap-3.5 text-xs font-medium text-slate-400 whitespace-nowrap">
         <span className="text-slate-300">
           Muscat (UTC+4): <strong className="text-amber-400 font-mono font-semibold tabular-nums ml-1">{muscatTime || '12:00:00 PM'}</strong>
         </span>
@@ -70,19 +70,21 @@ export function TopBar({
             <span className="text-slate-400 font-mono tabular-nums">Sync: {lastUpdated}</span>
           </>
         )}
-      </nav>
+      </div>
 
       {/* Zone 3: Primary action + Audio sound toggle */}
       <div className="flex items-center gap-2 md:gap-3 shrink-0">
         {/* Procedural Audio Breeze Toggle Button */}
         <button
           onClick={onToggleAudio}
-          className={`flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 min-h-[36px] text-xs font-semibold rounded-lg border transition-colors cursor-pointer whitespace-nowrap ${
+          className={`flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 min-h-[36px] text-xs font-semibold rounded-lg border transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${
             isAudioActive
               ? 'bg-amber-500/20 text-amber-300 border-amber-500/60'
               : 'bg-slate-900 text-slate-400 hover:text-slate-200 border-slate-800'
           }`}
           title={isAudioActive ? 'Mute Atmospheric Audio' : 'Play Procedural Breeze & Ocean Audio'}
+          aria-label={isAudioActive ? 'Mute atmospheric audio' : 'Play atmospheric audio'}
+          aria-pressed={isAudioActive}
         >
           {isAudioActive ? (
             <>
@@ -100,8 +102,9 @@ export function TopBar({
         {/* Overview Camera Reset */}
         <button
           onClick={onResetCamera}
-          className="flex items-center gap-1.5 md:gap-2 px-3 md:px-3.5 py-1.5 min-h-[36px] text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 hover:text-white border border-slate-700/80 rounded-lg transition-colors whitespace-nowrap shadow-sm cursor-pointer"
+          className="flex items-center gap-1.5 md:gap-2 px-3 md:px-3.5 py-1.5 min-h-[36px] text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 hover:text-white border border-slate-700/80 rounded-lg transition-colors whitespace-nowrap shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
           title="Reset Camera to Orbit Overview"
+          aria-label="Reset camera to overview"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Overview</span>
